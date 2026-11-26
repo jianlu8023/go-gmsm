@@ -114,19 +114,19 @@ go get -u github.com/tjfoc/gmsm
 
 ## 相关代码示例参考
 
-- [SM2算法 sm2/sm2_test.go](sm2/sm2_test.go)
-- [SM3算法 sm3/sm3_test.go](sm3/sm3_test.go)
-- [SM4算法 sm4/sm4_test.go](sm4/sm4_test.go)
-- [x509国密证书 x509/x509_test.go](x509/x509_test.go)
+- [SM2算法 sm2/sm2_test.go](../../sm2/sm2_test.go)
+- [SM3算法 sm3/sm3_test.go](../../sm3/sm3_test.go)
+- [SM4算法 sm4/sm4_test.go](../../sm4/sm4_test.go)
+- [x509国密证书 x509/x509_test.go](../../x509/x509_test.go)
 
 ## 国密SSL（TLCP）
 
 - 国密SSL协议遵循标准：《GM/T 0024-2014 SSL VPN技术规范》
 - **国密SSL协议目前升级为TLCP协议，遵循《GBT 38636-2020 信息安全技术 传输层密码协议》**，新增了SM4的GCM加密模式。
 
-国密SSL使用详情见文档： [《tjfoc 国密SSL协议快速入门》](gmtls/websvr/README.md)
+国密SSL使用详情见文档： [《tjfoc 国密SSL协议快速入门》](../../gmtls/websvr/README.md)
 
 示例入口：
 
-- [国密HTTPS Web服务器测试用例 gmtls/websvr/websvr.go](gmtls/websvr/websvr.go)
-- [国密TLS GRPC测试用例 gmtls/websvr/credentials_test.go](gmtls/gmcredentials/credentials_test.go)
+- [国密HTTPS Web服务器测试用例 gmtls/websvr/websvr.go](../../gmtls/websvr/websvr.go)
+- [国密TLS GRPC测试用例 gmtls/websvr/credentials_test.go](../../gmtls/gmcredentials/credentials_test.go)

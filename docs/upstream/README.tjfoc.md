@@ -25,7 +25,7 @@ GM SM2/3/4 library based on Golang
         . 提供Cipher.Block接口
         . 支持加密和不加密的pem文件格式(加密方法为pem block加密, 具体函数为x509.EncryptPEMBlock)
 
-## [Usage 使用说明](./API使用说明.md)
+## [Usage 使用说明](API使用说明.tjfoc.md)
 
 ## Communication
 tjfoc国密交流 
