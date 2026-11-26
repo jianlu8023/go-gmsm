@@ -13,8 +13,9 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
-	"github.com/tjfoc/gmsm/sm2"
 	"math/big"
+
+	"github.com/jianlu8023/go-gmsm/sm2"
 )
 
 type pkcs8 struct { // Duplicated from x509 package

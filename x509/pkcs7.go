@@ -19,7 +19,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/tjfoc/gmsm/sm2"
+	"github.com/jianlu8023/go-gmsm/sm2"
 )
 
 // PKCS7 Represents a PKCS7 structure

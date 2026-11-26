@@ -20,9 +20,10 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
-	"github.com/tjfoc/gmsm/sm2"
-	x "github.com/tjfoc/gmsm/x509"
 	"io/ioutil"
+
+	"github.com/jianlu8023/go-gmsm/sm2"
+	x "github.com/jianlu8023/go-gmsm/x509"
 )
 
 var (
