@@ -66,7 +66,7 @@
 针对于GMSSL特殊的双证书需求，特别为`gmtls.Config`增加了一个方法`gmtls.Config#GetKECertificate`
 通过该方法来提供GMSSL密钥交换过程中使用密钥对。
 
-更多细节实现见: [auto_handshake_server](../auto_handshake_server.go)
+更多细节实现见: [auto_handshake_server](../../gmtls/auto_handshake_server.go)
 
 ## GMSSL/TLS 自动切换模式
 
@@ -238,7 +238,7 @@ func main() {
 }
 ```
 
-更多细节见 [gmsm/http_client_test.go#TestNewHTTPSClient2](../http_client_test.go)
+更多细节见 [gmsm/http_client_test.go#TestNewHTTPSClient2](../../gmtls/http_client_test.go)
 
 ### HTTPS 双向身份认证
 
@@ -282,7 +282,7 @@ func main() {
 }
 ```
 
-更多细节见 [gmsm/http_client_test.go#TestSimpleNewAuthHTTPSClient](../http_client_test.go)
+更多细节见 [gmsm/http_client_test.go#TestSimpleNewAuthHTTPSClient](../../gmtls/http_client_test.go)
 
 ## TLCP GCM模式
 

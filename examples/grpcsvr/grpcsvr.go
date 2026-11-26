@@ -1,15 +1,14 @@
-package gmcredentials
+package grpcsvr
 
 import (
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net"
-	"testing"
-	"time"
 
+	"github.com/jianlu8023/go-gmsm/examples/echo"
 	"github.com/jianlu8023/go-gmsm/gmtls"
-	"github.com/jianlu8023/go-gmsm/gmtls/gmcredentials/echo"
+	"github.com/jianlu8023/go-gmsm/gmtls/gmcredentials"
 	"github.com/jianlu8023/go-gmsm/x509"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -28,14 +27,14 @@ func (s *server) Echo(ctx context.Context, req *echo.EchoRequest) (*echo.EchoRes
 	return &echo.EchoResponse{Result: req.Req}, nil
 }
 
-const ca = "testdata/ca.cert"
-const signCert = "testdata/sign.cert"
-const signKey = "testdata/sign.key"
-const encryptCert = "testdata/encrypt.cert"
-const encryptKey = "testdata/encrypt.key"
+const ca = "certs/ca.cert"
+const signCert = "certs/sign.cert"
+const signKey = "certs/sign.key"
+const encryptCert = "certs/encrypt.cert"
+const encryptKey = "certs/encrypt.key"
 
-const userCert = "testdata/user.cert"
-const userKey = "testdata/user.key"
+const userCert = "certs/user.cert"
+const userKey = "certs/user.key"
 
 func serverRun() {
 	signCert, err := gmtls.LoadX509KeyPair(signCert, signKey)
@@ -57,7 +56,7 @@ func serverRun() {
 	if err != nil {
 		log.Fatalf("fail to listen: %v", err)
 	}
-	creds := NewTLS(&gmtls.Config{
+	creds := gmcredentials.NewTLS(&gmtls.Config{
 		GMSupport:    &gmtls.GMSupport{},
 		ClientAuth:   gmtls.RequireAndVerifyClientCert,
 		Certificates: []gmtls.Certificate{signCert, encryptCert},
@@ -82,7 +81,7 @@ func clientRun() {
 		log.Fatal(err)
 	}
 	certPool.AppendCertsFromPEM(cacert)
-	creds := NewTLS(&gmtls.Config{
+	creds := gmcredentials.NewTLS(&gmtls.Config{
 		GMSupport:    &gmtls.GMSupport{},
 		ServerName:   "test.example.com",
 		Certificates: []gmtls.Certificate{cert},
@@ -105,12 +104,4 @@ func echoTest(c echo.EchoClient) {
 		log.Fatalf("failed to echo: %v", err)
 	}
 	fmt.Printf("%s\n", r.Result)
-}
-
-func Test(t *testing.T) {
-	end = make(chan bool, 64)
-	go serverRun()
-	time.Sleep(1000000)
-	go clientRun()
-	<-end
 }
