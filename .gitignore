@@ -6,7 +6,7 @@
 ### 测试证书 ###
 examples/grpcsvr/certs/
 examples/websvr/certs/
-gmtls/certs/
+tlcp/certs/
 
 ### 测试副产物 ###
 pkcs12/priv.pem

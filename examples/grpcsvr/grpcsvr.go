@@ -7,8 +7,8 @@ import (
 	"net"
 
 	"github.com/jianlu8023/go-gmsm/examples/echo"
-	"github.com/jianlu8023/go-gmsm/gmtls"
-	"github.com/jianlu8023/go-gmsm/gmtls/gmcredentials"
+	"github.com/jianlu8023/go-gmsm/tlcp"
+	"github.com/jianlu8023/go-gmsm/tlcp/credentials"
 	"github.com/jianlu8023/go-gmsm/x509"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -37,12 +37,12 @@ const userCert = "certs/user.cert"
 const userKey = "certs/user.key"
 
 func serverRun() {
-	signCert, err := gmtls.LoadX509KeyPair(signCert, signKey)
+	signCert, err := tlcp.LoadX509KeyPair(signCert, signKey)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	encryptCert, err := gmtls.LoadX509KeyPair(encryptCert, encryptKey)
+	encryptCert, err := tlcp.LoadX509KeyPair(encryptCert, encryptKey)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -56,10 +56,10 @@ func serverRun() {
 	if err != nil {
 		log.Fatalf("fail to listen: %v", err)
 	}
-	creds := gmcredentials.NewTLS(&gmtls.Config{
-		GMSupport:    &gmtls.GMSupport{},
-		ClientAuth:   gmtls.RequireAndVerifyClientCert,
-		Certificates: []gmtls.Certificate{signCert, encryptCert},
+	creds := credentials.NewTLS(&tlcp.Config{
+		GMSupport:    &tlcp.GMSupport{},
+		ClientAuth:   tlcp.RequireAndVerifyClientCert,
+		Certificates: []tlcp.Certificate{signCert, encryptCert},
 		ClientCAs:    certPool,
 	})
 	s := grpc.NewServer(grpc.Creds(creds))
@@ -71,7 +71,7 @@ func serverRun() {
 }
 
 func clientRun() {
-	cert, err := gmtls.LoadX509KeyPair(userCert, userKey)
+	cert, err := tlcp.LoadX509KeyPair(userCert, userKey)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -81,12 +81,12 @@ func clientRun() {
 		log.Fatal(err)
 	}
 	certPool.AppendCertsFromPEM(cacert)
-	creds := gmcredentials.NewTLS(&gmtls.Config{
-		GMSupport:    &gmtls.GMSupport{},
+	creds := credentials.NewTLS(&tlcp.Config{
+		GMSupport:    &tlcp.GMSupport{},
 		ServerName:   "test.example.com",
-		Certificates: []gmtls.Certificate{cert},
+		Certificates: []tlcp.Certificate{cert},
 		RootCAs:      certPool,
-		ClientAuth:   gmtls.RequireAndVerifyClientCert,
+		ClientAuth:   tlcp.RequireAndVerifyClientCert,
 	})
 	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(creds))
 	if err != nil {
