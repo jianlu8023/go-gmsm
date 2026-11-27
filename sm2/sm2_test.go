@@ -169,3 +169,28 @@ func TestKEB2(t *testing.T) {
 		t.Error("hash verfication failed")
 	}
 }
+
+// TestEncryptEmpty 空消息加密必须返回 (nil, nil)。
+// 归档的 tjfoc 原始实现在此路径下因 kdf(0) 恒 ok=false 导致无限循环（未终止 bug），
+// 新实现按 emmansun 行为修复；此测试为该修复的回归守护。
+func TestEncryptEmpty(t *testing.T) {
+	priv, err := GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, err := Encrypt(&priv.PublicKey, nil, rand.Reader, C1C3C2)
+	if err != nil {
+		t.Fatalf("Encrypt(nil): %v", err)
+	}
+	if ct != nil {
+		t.Fatalf("Encrypt(nil) returned %d bytes, want nil", len(ct))
+	}
+	// 空消息签名路径仍可正常签名/验签
+	sign, err := priv.Sign(rand.Reader, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !priv.PublicKey.Verify(nil, sign) {
+		t.Error("Verify of nil-message signature failed")
+	}
+}
