@@ -13,20 +13,28 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// Package sm2 提供 SM2 算法（签名/验签、加密/解密、密钥协商）实现。
+//
+// 本包保持原 github.com/jianlu8023/go-gmsm/sm2（tjfoc/gmsm 来源）的全部导出
+// API 与输出格式不变，底层算法核心（P-256 曲线运算、ECDSA 核心、SM2 加解密）
+// 委托给 github.com/emmansun/gmsm v0.29.8 实现（含汇编优化路径）；
+// ZA 摘要、KDF、密钥协商按原实现逐位保留。
+// 原实现代码归档于 tjfoc/gmsm/sm2。
 package sm2
 
 // reference to ecdsa
 import (
 	"bytes"
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"encoding/asn1"
 	"encoding/binary"
 	"errors"
 	"io"
 	"math/big"
 
+	gmsm2 "github.com/emmansun/gmsm/sm2"
 	"golang.org/x/crypto/cryptobyte"
 	cbasn1 "golang.org/x/crypto/cryptobyte/asn1"
 
@@ -40,21 +48,16 @@ var (
 	C1C2C3 = 1
 )
 
+// PublicKey 保持原类型形态（字段可直接访问），曲线委托 emmansun 实现。
 type PublicKey struct {
 	elliptic.Curve
 	X, Y *big.Int
 }
 
+// PrivateKey 保持原类型形态，签名/解密委托 emmansun 实现。
 type PrivateKey struct {
 	PublicKey
 	D *big.Int
-}
-
-type sm2Cipher struct {
-	XCoordinate *big.Int
-	YCoordinate *big.Int
-	HASH        []byte
-	CipherText  []byte
 }
 
 // The SM2's private key contains the public key
@@ -66,8 +69,47 @@ var errZeroParam = errors.New("zero parameter")
 var one = new(big.Int).SetInt64(1)
 var two = new(big.Int).SetInt64(2)
 
+// P256Sm2 返回 SM2 曲线（emmansun 实现，单例，Params 指针身份稳定）。
+func P256Sm2() elliptic.Curve {
+	return gmsm2.P256()
+}
+
+// ec 返回 emmansun 视角的公钥（*ecdsa.PublicKey）。
+func (pub *PublicKey) ec() *ecdsa.PublicKey {
+	curve := pub.Curve
+	if curve == nil {
+		curve = P256Sm2()
+	}
+	return &ecdsa.PublicKey{Curve: curve, X: pub.X, Y: pub.Y}
+}
+
+// ec 返回 emmansun 视角的私钥（*gmsm2.PrivateKey）。
+func (priv *PrivateKey) ec() (*gmsm2.PrivateKey, error) {
+	curve := priv.Curve
+	if curve == nil {
+		curve = P256Sm2()
+	}
+	ecPriv := &ecdsa.PrivateKey{
+		PublicKey: ecdsa.PublicKey{Curve: curve, X: priv.X, Y: priv.Y},
+		D:         priv.D,
+	}
+	return new(gmsm2.PrivateKey).FromECPrivateKey(ecPriv)
+}
+
 // sign format = 30 + len(z) + 02 + len(r) + r + 02 + len(s) + s, z being what follows its size, ie 02+len(r)+r+02+len(s)+s
+//
+// opts 为 *SM2SignerOption（NewSM2SignerOption 创建）时委托 emmansun 的
+// GM 语义签名：forceGMSign=true 时 msg 视为原始消息（内部做 ZA+SM3，uid 取自
+// opts，未指定用 default_uid）；forceGMSign=false 时 msg 视为已算好的摘要。
+// 其余 opts 保持原 SM2 消息语义（uid 固定 default_uid）。
 func (priv *PrivateKey) Sign(random io.Reader, msg []byte, signer crypto.SignerOpts) ([]byte, error) {
+	if sm2Opts, ok := signer.(*SM2SignerOption); ok {
+		d, err := priv.ec()
+		if err != nil {
+			return nil, err
+		}
+		return gmsm2.SignASN1(random, d, msg, toGmsmOpts(sm2Opts))
+	}
 	r, s, err := Sm2Sign(priv, msg, nil, random)
 	if err != nil {
 		return nil, err
@@ -136,6 +178,8 @@ func KeyExchangeA(klen int, ida, idb []byte, priA *PrivateKey, pubB *PublicKey, 
 
 //****************************************************************************//
 
+// Sm2Sign 按 GB/T 32918.2 对 msg 做 SM2 签名（uid 为空时使用 default_uid），
+// 摘要部分（ZA + SM3）为本地实现以保持与原实现逐位等价，ECDSA 核心委托 emmansun。
 func Sm2Sign(priv *PrivateKey, msg, uid []byte, random io.Reader) (r, s *big.Int, err error) {
 	digest, err := priv.PublicKey.Sm3Digest(msg, uid)
 	if err != nil {
@@ -143,44 +187,29 @@ func Sm2Sign(priv *PrivateKey, msg, uid []byte, random io.Reader) (r, s *big.Int
 	}
 	e := new(big.Int).SetBytes(digest)
 	c := priv.PublicKey.Curve
+	if c == nil {
+		c = P256Sm2()
+	}
 	N := c.Params().N
 	if N.Sign() == 0 {
 		return nil, nil, errZeroParam
 	}
-	var k *big.Int
-	for { // 调整算法细节以实现SM2
-		for {
-			k, err = randFieldElement(c, random)
-			if err != nil {
-				r = nil
-				return
-			}
-			r, _ = priv.Curve.ScalarBaseMult(k.Bytes())
-			r.Add(r, e)
-			r.Mod(r, N)
-			if r.Sign() != 0 {
-				if t := new(big.Int).Add(r, k); t.Cmp(N) != 0 {
-					break
-				}
-			}
-
-		}
-		rD := new(big.Int).Mul(priv.D, r)
-		s = new(big.Int).Sub(k, rD)
-		d1 := new(big.Int).Add(priv.D, one)
-		d1Inv := new(big.Int).ModInverse(d1, N)
-		s.Mul(s, d1Inv)
-		s.Mod(s, N)
-		if s.Sign() != 0 {
-			break
-		}
+	ecPriv := &ecdsa.PrivateKey{
+		PublicKey: ecdsa.PublicKey{Curve: c, X: priv.X, Y: priv.Y},
+		D:         priv.D,
 	}
-	return
+	// emmansun legacy 函数：hash 语义签名（e 已为本地计算的摘要值）
+	return gmsm2.Sign(random, ecPriv, e.Bytes())
 }
+
+// Sm2Verify 按 GB/T 32918.2 验证 msg 的 SM2 签名（uid 为空时使用 default_uid），
+// 摘要部分为本地实现，ECDSA 核心委托 emmansun。
 func Sm2Verify(pub *PublicKey, msg, uid []byte, r, s *big.Int) bool {
 	c := pub.Curve
+	if c == nil {
+		c = P256Sm2()
+	}
 	N := c.Params().N
-	one := new(big.Int).SetInt64(1)
 	if r.Cmp(one) < 0 || s.Cmp(one) < 0 {
 		return false
 	}
@@ -198,31 +227,17 @@ func Sm2Verify(pub *PublicKey, msg, uid []byte, r, s *big.Int) bool {
 	if err != nil {
 		return false
 	}
-	t := new(big.Int).Add(r, s)
-	t.Mod(t, N)
-	if t.Sign() == 0 {
-		return false
-	}
-	var x *big.Int
-	x1, y1 := c.ScalarBaseMult(s.Bytes())
-	x2, y2 := c.ScalarMult(pub.X, pub.Y, t.Bytes())
-	x, _ = c.Add(x1, y1, x2, y2)
-
-	x.Add(x, e)
-	x.Mod(x, N)
-	return x.Cmp(r) == 0
+	return gmsm2.Verify(pub.ec(), e.Bytes(), r, s)
 }
 
 /*
-	    za, err := ZA(pub, uid)
-		if err != nil {
-			return
-		}
-		e, err := msgHash(za, msg)
-		hash=e.getBytes()
-*/
+ * hash 语义验签：hash 为已计算好的摘要值（不做 ZA 预处理）。
+ */
 func Verify(pub *PublicKey, hash []byte, r, s *big.Int) bool {
 	c := pub.Curve
+	if c == nil {
+		c = P256Sm2()
+	}
 	N := c.Params().N
 
 	if r.Sign() <= 0 || s.Sign() <= 0 {
@@ -232,22 +247,7 @@ func Verify(pub *PublicKey, hash []byte, r, s *big.Int) bool {
 		return false
 	}
 
-	// 调整算法细节以实现SM2
-	t := new(big.Int).Add(r, s)
-	t.Mod(t, N)
-	if t.Sign() == 0 {
-		return false
-	}
-
-	var x *big.Int
-	x1, y1 := c.ScalarBaseMult(s.Bytes())
-	x2, y2 := c.ScalarMult(pub.X, pub.Y, t.Bytes())
-	x, _ = c.Add(x1, y1, x2, y2)
-
-	e := new(big.Int).SetBytes(hash)
-	x.Add(x, e)
-	x.Mod(x, N)
-	return x.Cmp(r) == 0
+	return gmsm2.Verify(pub.ec(), hash, r, s)
 }
 
 /*
@@ -258,68 +258,23 @@ func Verify(pub *PublicKey, hash []byte, r, s *big.Int) bool {
  *  CipherText
  */
 func Encrypt(pub *PublicKey, data []byte, random io.Reader, mode int) ([]byte, error) {
-	length := len(data)
-	for {
-		c := []byte{}
-		curve := pub.Curve
-		k, err := randFieldElement(curve, random)
-		if err != nil {
-			return nil, err
-		}
-		x1, y1 := curve.ScalarBaseMult(k.Bytes())
-		x2, y2 := curve.ScalarMult(pub.X, pub.Y, k.Bytes())
-		x1Buf := x1.Bytes()
-		y1Buf := y1.Bytes()
-		x2Buf := x2.Bytes()
-		y2Buf := y2.Bytes()
-		if n := len(x1Buf); n < 32 {
-			x1Buf = append(zeroByteSlice()[:32-n], x1Buf...)
-		}
-		if n := len(y1Buf); n < 32 {
-			y1Buf = append(zeroByteSlice()[:32-n], y1Buf...)
-		}
-		if n := len(x2Buf); n < 32 {
-			x2Buf = append(zeroByteSlice()[:32-n], x2Buf...)
-		}
-		if n := len(y2Buf); n < 32 {
-			y2Buf = append(zeroByteSlice()[:32-n], y2Buf...)
-		}
-		c = append(c, x1Buf...) // x分量
-		c = append(c, y1Buf...) // y分量
-		tm := []byte{}
-		tm = append(tm, x2Buf...)
-		tm = append(tm, data...)
-		tm = append(tm, y2Buf...)
-		h := sm3.Sm3Sum(tm)
-		c = append(c, h...)
-		ct, ok := kdf(length, x2Buf, y2Buf) // 密文
-		if !ok {
-			continue
-		}
-		c = append(c, ct...)
-		for i := 0; i < length; i++ {
-			c[96+i] ^= data[i]
-		}
-		switch mode {
-
-		case C1C3C2:
-			return append([]byte{0x04}, c...), nil
-		case C1C2C3:
-			c1 := make([]byte, 64)
-			c2 := make([]byte, len(c)-96)
-			c3 := make([]byte, 32)
-			copy(c1, c[:64])   //x1,y1
-			copy(c3, c[64:96]) //hash
-			copy(c2, c[96:])   //密文
-			ciphertext := []byte{}
-			ciphertext = append(ciphertext, c1...)
-			ciphertext = append(ciphertext, c2...)
-			ciphertext = append(ciphertext, c3...)
-			return append([]byte{0x04}, ciphertext...), nil
-		default:
-			return append([]byte{0x04}, c...), nil
-		}
+	// 空消息时返回 (nil, nil)：归档实现该路径因 kdf(0) 恒返回 ok=false 而无限循环
+	//（未终止 bug），此处按 emmansun 行为返回空密文。
+	if len(data) == 0 {
+		return nil, nil
 	}
+	curve := pub.Curve
+	if curve == nil {
+		curve = P256Sm2()
+	}
+	if pub.X.Sign() == 0 && pub.Y.Sign() == 0 {
+		return nil, errors.New("sm2: public key point is the infinity")
+	}
+	splice := gmsm2.C1C3C2
+	if mode == C1C2C3 {
+		splice = gmsm2.C1C2C3
+	}
+	return gmsm2.Encrypt(random, pub.ec(), data, gmsm2.NewPlainEncrypterOpts(gmsm2.MarshalUncompressed, splice))
 }
 
 func Decrypt(priv *PrivateKey, data []byte, mode int) ([]byte, error) {
@@ -342,132 +297,20 @@ func Decrypt(priv *PrivateKey, data []byte, mode int) ([]byte, error) {
 	default:
 		data = data[1:]
 	}
-	length := len(data) - 96
-	curve := priv.Curve
-	x := new(big.Int).SetBytes(data[:32])
-	y := new(big.Int).SetBytes(data[32:64])
-	x2, y2 := curve.ScalarMult(x, y, priv.D.Bytes())
-	x2Buf := x2.Bytes()
-	y2Buf := y2.Bytes()
-	if n := len(x2Buf); n < 32 {
-		x2Buf = append(zeroByteSlice()[:32-n], x2Buf...)
-	}
-	if n := len(y2Buf); n < 32 {
-		y2Buf = append(zeroByteSlice()[:32-n], y2Buf...)
-	}
-	c, ok := kdf(length, x2Buf, y2Buf)
-	if !ok {
+	gsm, err := priv.ec()
+	if err != nil {
 		return nil, errors.New("Decrypt: failed to decrypt")
 	}
-	for i := 0; i < length; i++ {
-		c[i] ^= data[i+96]
-	}
-	tm := []byte{}
-	tm = append(tm, x2Buf...)
-	tm = append(tm, c...)
-	tm = append(tm, y2Buf...)
-	h := sm3.Sm3Sum(tm)
-	if bytes.Compare(h, data[64:96]) != 0 {
-		return c, errors.New("Decrypt: failed to decrypt")
-	}
-	return c, nil
-}
-
-// keyExchange 为SM2密钥交换算法的第二部和第三步复用部分，协商的双方均调用此函数计算共同的字节串
-// klen: 密钥长度
-// ida, idb: 协商双方的标识，ida为密钥协商算法发起方标识，idb为响应方标识
-// pri: 函数调用者的密钥
-// pub: 对方的公钥
-// rpri: 函数调用者生成的临时SM2密钥
-// rpub: 对方发来的临时SM2公钥
-// thisIsA: 如果是A调用，文档中的协商第三步，设置为true，否则设置为false
-// 返回 k 为klen长度的字节串
-func keyExchange(klen int, ida, idb []byte, pri *PrivateKey, pub *PublicKey, rpri *PrivateKey, rpub *PublicKey, thisISA bool) (k, s1, s2 []byte, err error) {
-	curve := P256Sm2()
-	N := curve.Params().N
-	x2hat := keXHat(rpri.PublicKey.X)
-	x2rb := new(big.Int).Mul(x2hat, rpri.D)
-	tbt := new(big.Int).Add(pri.D, x2rb)
-	tb := new(big.Int).Mod(tbt, N)
-	if !curve.IsOnCurve(rpub.X, rpub.Y) {
-		err = errors.New("Ra not on curve")
-		return
-	}
-	x1hat := keXHat(rpub.X)
-	ramx1, ramy1 := curve.ScalarMult(rpub.X, rpub.Y, x1hat.Bytes())
-	vxt, vyt := curve.Add(pub.X, pub.Y, ramx1, ramy1)
-
-	vx, vy := curve.ScalarMult(vxt, vyt, tb.Bytes())
-	pza := pub
-	if thisISA {
-		pza = &pri.PublicKey
-	}
-	za, err := ZA(pza, ida)
+	plain, err := gmsm2.Decrypt(gsm, append([]byte{0x04}, data...))
 	if err != nil {
-		return
+		return nil, errors.New("Decrypt: failed to decrypt")
 	}
-	zero := new(big.Int)
-	if vx.Cmp(zero) == 0 || vy.Cmp(zero) == 0 {
-		err = errors.New("V is infinite")
-	}
-	pzb := pub
-	if !thisISA {
-		pzb = &pri.PublicKey
-	}
-	zb, err := ZA(pzb, idb)
-	k, ok := kdf(klen, vx.Bytes(), vy.Bytes(), za, zb)
-	if !ok {
-		err = errors.New("kdf: zero key")
-		return
-	}
-	h1 := BytesCombine(vx.Bytes(), za, zb, rpub.X.Bytes(), rpub.Y.Bytes(), rpri.X.Bytes(), rpri.Y.Bytes())
-	if !thisISA {
-		h1 = BytesCombine(vx.Bytes(), za, zb, rpri.X.Bytes(), rpri.Y.Bytes(), rpub.X.Bytes(), rpub.Y.Bytes())
-	}
-	hash := sm3.Sm3Sum(h1)
-	h2 := BytesCombine([]byte{0x02}, vy.Bytes(), hash)
-	S1 := sm3.Sm3Sum(h2)
-	h3 := BytesCombine([]byte{0x03}, vy.Bytes(), hash)
-	S2 := sm3.Sm3Sum(h3)
-	return k, S1, S2, nil
+	return plain, nil
 }
 
-func msgHash(za, msg []byte) (*big.Int, error) {
-	e := sm3.New()
-	e.Write(za)
-	e.Write(msg)
-	return new(big.Int).SetBytes(e.Sum(nil)[:32]), nil
-}
-
-// ZA = H256(ENTLA || IDA || a || b || xG || yG || xA || yA)
-func ZA(pub *PublicKey, uid []byte) ([]byte, error) {
-	za := sm3.New()
-	uidLen := len(uid)
-	if uidLen >= 8192 {
-		return []byte{}, errors.New("SM2: uid too large")
-	}
-	Entla := uint16(8 * uidLen)
-	za.Write([]byte{byte((Entla >> 8) & 0xFF)})
-	za.Write([]byte{byte(Entla & 0xFF)})
-	if uidLen > 0 {
-		za.Write(uid)
-	}
-	za.Write(sm2P256ToBig(&sm2P256.a).Bytes())
-	za.Write(sm2P256.B.Bytes())
-	za.Write(sm2P256.Gx.Bytes())
-	za.Write(sm2P256.Gy.Bytes())
-
-	xBuf := pub.X.Bytes()
-	yBuf := pub.Y.Bytes()
-	if n := len(xBuf); n < 32 {
-		xBuf = append(zeroByteSlice()[:32-n], xBuf...)
-	}
-	if n := len(yBuf); n < 32 {
-		yBuf = append(zeroByteSlice()[:32-n], yBuf...)
-	}
-	za.Write(xBuf)
-	za.Write(yBuf)
-	return za.Sum(nil)[:32], nil
+// crypto.Decrypter
+func (priv *PrivateKey) Decrypt(_ io.Reader, msg []byte, _ crypto.DecrypterOpts) (plaintext []byte, err error) {
+	return Decrypt(priv, msg, C1C3C2)
 }
 
 // 32byte
@@ -482,141 +325,6 @@ func zeroByteSlice() []byte {
 		0, 0, 0, 0,
 		0, 0, 0, 0,
 	}
-}
-
-/*
-sm2加密，返回asn.1编码格式的密文内容
-*/
-func EncryptAsn1(pub *PublicKey, data []byte, rand io.Reader) ([]byte, error) {
-	cipher, err := Encrypt(pub, data, rand, C1C3C2)
-	if err != nil {
-		return nil, err
-	}
-	return CipherMarshal(cipher)
-}
-
-/*
-sm2解密，解析asn.1编码格式的密文内容
-*/
-func DecryptAsn1(pub *PrivateKey, data []byte) ([]byte, error) {
-	cipher, err := CipherUnmarshal(data)
-	if err != nil {
-		return nil, err
-	}
-	return Decrypt(pub, cipher, C1C3C2)
-}
-
-/*
-*sm2密文转asn.1编码格式
-*sm2密文结构如下:
-*  x
-*  y
-*  hash
-*  CipherText
- */
-func CipherMarshal(data []byte) ([]byte, error) {
-	data = data[1:]
-	x := new(big.Int).SetBytes(data[:32])
-	y := new(big.Int).SetBytes(data[32:64])
-	hash := data[64:96]
-	cipherText := data[96:]
-	return asn1.Marshal(sm2Cipher{x, y, hash, cipherText})
-}
-
-/*
-sm2密文asn.1编码格式转C1|C3|C2拼接格式
-*/
-func CipherUnmarshal(data []byte) ([]byte, error) {
-	var cipher sm2Cipher
-	_, err := asn1.Unmarshal(data, &cipher)
-	if err != nil {
-		return nil, err
-	}
-	x := cipher.XCoordinate.Bytes()
-	y := cipher.YCoordinate.Bytes()
-	hash := cipher.HASH
-	if err != nil {
-		return nil, err
-	}
-	cipherText := cipher.CipherText
-	if err != nil {
-		return nil, err
-	}
-	if n := len(x); n < 32 {
-		x = append(zeroByteSlice()[:32-n], x...)
-	}
-	if n := len(y); n < 32 {
-		y = append(zeroByteSlice()[:32-n], y...)
-	}
-	c := []byte{}
-	c = append(c, x...)          // x分量
-	c = append(c, y...)          // y分
-	c = append(c, hash...)       // x分量
-	c = append(c, cipherText...) // y分
-	return append([]byte{0x04}, c...), nil
-}
-
-// keXHat 计算 x = 2^w + (x & (2^w-1))
-// 密钥协商算法辅助函数
-func keXHat(x *big.Int) (xul *big.Int) {
-	buf := x.Bytes()
-	for i := 0; i < len(buf)-16; i++ {
-		buf[i] = 0
-	}
-	if len(buf) >= 16 {
-		c := buf[len(buf)-16]
-		buf[len(buf)-16] = c & 0x7f
-	}
-
-	r := new(big.Int).SetBytes(buf)
-	_2w := new(big.Int).SetBytes([]byte{
-		0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
-	return r.Add(r, _2w)
-}
-
-func BytesCombine(pBytes ...[]byte) []byte {
-	len := len(pBytes)
-	s := make([][]byte, len)
-	for index := 0; index < len; index++ {
-		s[index] = pBytes[index]
-	}
-	sep := []byte("")
-	return bytes.Join(s, sep)
-}
-
-func intToBytes(x int) []byte {
-	var buf = make([]byte, 4)
-
-	binary.BigEndian.PutUint32(buf, uint32(x))
-	return buf
-}
-
-func kdf(length int, x ...[]byte) ([]byte, bool) {
-	var c []byte
-
-	ct := 1
-	h := sm3.New()
-	for i, j := 0, (length+31)/32; i < j; i++ {
-		h.Reset()
-		for _, xx := range x {
-			h.Write(xx)
-		}
-		h.Write(intToBytes(ct))
-		hash := h.Sum(nil)
-		if i+1 == j && length%32 != 0 {
-			c = append(c, hash[:length%32]...)
-		} else {
-			c = append(c, hash...)
-		}
-		ct++
-	}
-	for i := 0; i < length; i++ {
-		if c[i] != 0 {
-			return c, true
-		}
-	}
-	return c, false
 }
 
 func randFieldElement(c elliptic.Curve, random io.Reader) (k *big.Int, err error) {
@@ -636,6 +344,8 @@ func randFieldElement(c elliptic.Curve, random io.Reader) (k *big.Int, err error
 	return
 }
 
+// GenerateKey 保留原实现随机数生成逻辑（40 字节随机数 mod (N-2)+1），
+// 曲线运算委托 emmansun。
 func GenerateKey(random io.Reader) (*PrivateKey, error) {
 	c := P256Sm2()
 	if random == nil {
@@ -673,11 +383,92 @@ func (z *zr) Read(dst []byte) (n int, err error) {
 
 var zeroReader = &zr{}
 
-func getLastBit(a *big.Int) uint {
-	return a.Bit(0)
+// msgHash 计算 SM2 消息摘要 e = SM3(za || msg)（本地实现，保持原行为）。
+func msgHash(za, msg []byte) (*big.Int, error) {
+	e := sm3.New()
+	e.Write(za)
+	e.Write(msg)
+	return new(big.Int).SetBytes(e.Sum(nil)[:32]), nil
 }
 
-// crypto.Decrypter
-func (priv *PrivateKey) Decrypt(_ io.Reader, msg []byte, _ crypto.DecrypterOpts) (plaintext []byte, err error) {
-	return Decrypt(priv, msg, C1C3C2)
+// ZA = H256(ENTLA || IDA || a || b || xG || yG || xA || yA)
+// 本地实现，与归档的 tjfoc 实现逐位一致（曲线参数取 P256Sm2().Params()，
+// a = P - 3，SM2 曲线参数 .Bytes() 均为 32 字节，与 emmansun CalculateZA 等价）。
+func ZA(pub *PublicKey, uid []byte) ([]byte, error) {
+	za := sm3.New()
+	uidLen := len(uid)
+	if uidLen >= 8192 {
+		return []byte{}, errors.New("SM2: uid too large")
+	}
+	Entla := uint16(8 * uidLen)
+	za.Write([]byte{byte((Entla >> 8) & 0xFF)})
+	za.Write([]byte{byte(Entla & 0xFF)})
+	if uidLen > 0 {
+		za.Write(uid)
+	}
+	params := P256Sm2().Params()
+	// SM2 曲线 a = p - 3，与归档实现 sm2P256.a 的取值一致
+	a := new(big.Int).Sub(params.P, three)
+	za.Write(a.Bytes())
+	za.Write(params.B.Bytes())
+	za.Write(params.Gx.Bytes())
+	za.Write(params.Gy.Bytes())
+
+	xBuf := pub.X.Bytes()
+	yBuf := pub.Y.Bytes()
+	if n := len(xBuf); n < 32 {
+		xBuf = append(zeroByteSlice()[:32-n], xBuf...)
+	}
+	if n := len(yBuf); n < 32 {
+		yBuf = append(zeroByteSlice()[:32-n], yBuf...)
+	}
+	za.Write(xBuf)
+	za.Write(yBuf)
+	return za.Sum(nil)[:32], nil
+}
+
+var three = new(big.Int).SetInt64(3)
+
+func intToBytes(x int) []byte {
+	var buf = make([]byte, 4)
+
+	binary.BigEndian.PutUint32(buf, uint32(x))
+	return buf
+}
+
+func kdf(length int, x ...[]byte) ([]byte, bool) {
+	var c []byte
+
+	ct := 1
+	h := sm3.New()
+	for i, j := 0, (length+31)/32; i < j; i++ {
+		h.Reset()
+		for _, xx := range x {
+			h.Write(xx)
+		}
+		h.Write(intToBytes(ct))
+		hash := h.Sum(nil)
+		if i+1 == j && length%32 != 0 {
+			c = append(c, hash[:length%32]...)
+		} else {
+			c = append(c, hash...)
+		}
+		ct++
+	}
+	for i := 0; i < length; i++ {
+		if c[i] != 0 {
+			return c, true
+		}
+	}
+	return c, false
+}
+
+func BytesCombine(pBytes ...[]byte) []byte {
+	len := len(pBytes)
+	s := make([][]byte, len)
+	for index := 0; index < len; index++ {
+		s[index] = pBytes[index]
+	}
+	sep := []byte("")
+	return bytes.Join(s, sep)
 }

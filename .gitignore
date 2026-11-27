@@ -11,5 +11,8 @@ gmtls/certs/
 ### 测试副产物 ###
 pkcs12/priv.pem
 pkcs12/test.p12
+tjfoc/gmsm/sm2/TestResult
 sm2/TestResult
+sm3/ifile
 sm4/key.pem
+tjfoc/gmsm/sm4/key.pem
