@@ -11,7 +11,7 @@ import (
 
 	"github.com/jianlu8023/go-gmsm/x509"
 
-	"github.com/jianlu8023/go-gmsm/gmtls"
+	"github.com/jianlu8023/go-gmsm/tlcp"
 )
 
 const (
@@ -36,7 +36,7 @@ func ServerRun() {
 		panic(err)
 	}
 
-	ln, err := gmtls.Listen("tcp", ":50052", config)
+	ln, err := tlcp.Listen("tcp", ":50052", config)
 	if err != nil {
 		log.Println(err)
 		return
@@ -55,7 +55,7 @@ func ServerRun() {
 
 func ClientRun() {
 	var config = tls.Config{
-		MaxVersion:         gmtls.VersionTLS12,
+		MaxVersion:         tlcp.VersionTLS12,
 		InsecureSkipVerify: true,
 	}
 	conn, err := tls.Dial("tcp", "localhost:50052", &config)
@@ -91,15 +91,15 @@ func gmClientRun() {
 		log.Fatal(err)
 	}
 	certPool.AppendCertsFromPEM(cacert)
-	cert, err := gmtls.LoadX509KeyPair(sm2UserCertPath, sm2UserKeyPath)
+	cert, err := tlcp.LoadX509KeyPair(sm2UserCertPath, sm2UserKeyPath)
 
-	config := &gmtls.Config{
-		GMSupport:    &gmtls.GMSupport{},
+	config := &tlcp.Config{
+		GMSupport:    &tlcp.GMSupport{},
 		RootCAs:      certPool,
-		Certificates: []gmtls.Certificate{cert},
+		Certificates: []tlcp.Certificate{cert},
 	}
 
-	conn, err := gmtls.Dial("tcp", "localhost:50052", config)
+	conn, err := tlcp.Dial("tcp", "localhost:50052", config)
 	if err != nil {
 		panic(err)
 	}
@@ -132,16 +132,16 @@ func gmGCMClientRun() {
 		log.Fatal(err)
 	}
 	certPool.AppendCertsFromPEM(cacert)
-	cert, err := gmtls.LoadX509KeyPair(sm2UserCertPath, sm2UserKeyPath)
+	cert, err := tlcp.LoadX509KeyPair(sm2UserCertPath, sm2UserKeyPath)
 
-	config := &gmtls.Config{
-		GMSupport:    &gmtls.GMSupport{},
+	config := &tlcp.Config{
+		GMSupport:    &tlcp.GMSupport{},
 		RootCAs:      certPool,
-		Certificates: []gmtls.Certificate{cert},
-		CipherSuites: []uint16{gmtls.GMTLS_ECC_SM4_GCM_SM3},
+		Certificates: []tlcp.Certificate{cert},
+		CipherSuites: []uint16{tlcp.GMTLS_ECC_SM4_GCM_SM3},
 	}
 
-	conn, err := gmtls.Dial("tcp", "localhost:50052", config)
+	conn, err := tlcp.Dial("tcp", "localhost:50052", config)
 	if err != nil {
 		panic(err)
 	}

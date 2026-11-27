@@ -1,8 +1,11 @@
-// Copyright 2017 The Go Authors. All rights reserved.
+// Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package gmtls
+//go:build single_cert
+// +build single_cert
+
+package tlcp
 
 import (
 	"bytes"
@@ -202,10 +205,10 @@ func (hs *clientHandshakeStateGM) doFullHandshake() error {
 
 	// mod by syl only one cert
 	// Thanks to dual certificates mechanism, length of certificates in GMT0024 must great than 2
-	if len(certMsg.certificates) < 2 {
-		c.sendAlert(alertInsufficientSecurity)
-		return fmt.Errorf("tls: length of certificates in GMT0024 must great than 2")
-	}
+	//if len(certMsg.certificates) < 2{
+	//	c.sendAlert(alertInsufficientSecurity)
+	//	return fmt.Errorf("tls: length of certificates in GMT0024 must great than 2")
+	//}
 
 	hs.finishedHash.Write(certMsg.marshal())
 
@@ -220,26 +223,29 @@ func (hs *clientHandshakeStateGM) doFullHandshake() error {
 				return errors.New("tls: failed to parse certificate from server: " + err.Error())
 			}
 
-			pubKey, _ := cert.PublicKey.(*ecdsa.PublicKey)
-			if pubKey.Curve != sm2.P256Sm2() {
-				c.sendAlert(alertUnsupportedCertificate)
-				return fmt.Errorf("tls: pubkey type of cert is error, expect sm2.publicKey")
-			}
-
-			//cert[0] is for signature while cert[1] is for encipher, refer to  GMT0024
-			//check key usage
-			switch i {
-			case 0:
-				if cert.KeyUsage == 0 || (cert.KeyUsage&(x509.KeyUsageDigitalSignature|cert.KeyUsage&x509.KeyUsageContentCommitment)) == 0 {
-					c.sendAlert(alertInsufficientSecurity)
-					return fmt.Errorf("tls: the keyusage of cert[0] does not exist or is not for KeyUsageDigitalSignature/KeyUsageContentCommitment, value:%d", cert.KeyUsage)
-				}
-			case 1:
-				if cert.KeyUsage == 0 || (cert.KeyUsage&(x509.KeyUsageDataEncipherment|x509.KeyUsageKeyEncipherment|x509.KeyUsageKeyAgreement)) == 0 {
-					c.sendAlert(alertInsufficientSecurity)
-					return fmt.Errorf("tls: the keyusage of cert[1] does not exist or is not for KeyUsageDataEncipherment/KeyUsageKeyEncipherment/KeyUsageKeyAgreement, value:%d", cert.KeyUsage)
-				}
-			}
+			// mod by syl below
+			//if cert.SignatureAlgorithm != x509.SM2WithSM3{
+			//	c.sendAlert(alertUnsupportedCertificate)
+			//	return fmt.Errorf("tls: SignatureAlgorithm of the certificate[%d] is not supported, actual:%s, expect:SM2WITHSM3", i, cert.SignatureAlgorithm.String())
+			//}
+			//if cert.PublicKeyAlgorithm != x509.SM2 {
+			//	c.sendAlert(alertUnsupportedCertificate)
+			//	return fmt.Errorf("tls: PublicKeyAlgorithm of the certificate[%d] is not supported, actual:%s, expect:SM2", i, []string{"unkown", "RSA", "DSA", "ECDSA", "SM2"}[int(cert.PublicKeyAlgorithm)])
+			//}
+			////cert[0] is for signature while cert[1] is for encipher, refer to  GMT0024
+			////check key usage
+			//switch i {
+			//case 0:
+			//	if cert.KeyUsage == 0 || (cert.KeyUsage & (x509.KeyUsageDigitalSignature | cert.KeyUsage&x509.KeyUsageContentCommitment)) == 0{
+			//		c.sendAlert(alertInsufficientSecurity)
+			//		return fmt.Errorf("tls: the keyusage of cert[0] does not exist or is not for KeyUsageDigitalSignature/KeyUsageContentCommitment, value:%d", cert.KeyUsage)
+			//	}
+			//case 1:
+			//	if cert.KeyUsage == 0 || (cert.KeyUsage & (x509.KeyUsageDataEncipherment | x509.KeyUsageKeyEncipherment | x509.KeyUsageKeyAgreement))==0{
+			//		c.sendAlert(alertInsufficientSecurity)
+			//		return fmt.Errorf("tls: the keyusage of cert[1] does not exist or is not for KeyUsageDataEncipherment/KeyUsageKeyEncipherment/KeyUsageKeyAgreement, value:%d", cert.KeyUsage)
+			//	}
+			//}
 
 			certs[i] = cert
 		}
@@ -259,19 +265,17 @@ func (hs *clientHandshakeStateGM) doFullHandshake() error {
 				opts.Roots.AddCert(rootca)
 			}
 			for i, cert := range certs {
-				// GM SSL 证书链中不含根证书 第1张为签名证书、第2张为加密证书，其他的证书都认为是根证书
-				if i == 0 || i == 1 {
-					// 只验证 签名证书  和 加密证书
-					c.verifiedChains, err = certs[i].Verify(opts)
-					if err != nil {
-						_ = c.sendAlert(alertBadCertificate)
-						return err
-					}
+				if i == 0 {
 					continue
 				}
 				opts.Intermediates.AddCert(cert)
 			}
 
+			c.verifiedChains, err = certs[0].Verify(opts)
+			if err != nil {
+				c.sendAlert(alertBadCertificate)
+				return err
+			}
 		}
 
 		if c.config.VerifyPeerCertificate != nil {
@@ -310,7 +314,9 @@ func (hs *clientHandshakeStateGM) doFullHandshake() error {
 
 	keyAgreement := hs.suite.ka(c.vers)
 	if ka, ok := keyAgreement.(*eccKeyAgreementGM); ok {
-		ka.encipherCert = c.peerCertificates[1]
+		// mod by syl only one cert
+		//ka.encipherCert = c.peerCertificates[1]
+		ka.encipherCert = c.peerCertificates[0]
 	}
 
 	skx, ok := msg.(*serverKeyExchangeMsg)
@@ -335,7 +341,7 @@ func (hs *clientHandshakeStateGM) doFullHandshake() error {
 		certRequested = true
 		hs.finishedHash.Write(certReq.marshal())
 
-		if chainToSend, err = hs.getCertificate(certReq); err != nil {
+		if chainToSend, err = hs.getCertificate(certReq); err != nil || chainToSend.Certificate == nil {
 			c.sendAlert(alertInternalError)
 			return err
 		}
@@ -365,7 +371,9 @@ func (hs *clientHandshakeStateGM) doFullHandshake() error {
 		}
 	}
 
-	preMasterSecret, ckx, err := keyAgreement.generateClientKeyExchange(c.config, hs.hello, c.peerCertificates[1])
+	// mod by syl only one cert
+	//preMasterSecret, ckx, err := keyAgreement.generateClientKeyExchange(c.config, hs.hello, c.peerCertificates[1])
+	preMasterSecret, ckx, err := keyAgreement.generateClientKeyExchange(c.config, hs.hello, c.peerCertificates[0])
 	if err != nil {
 		c.sendAlert(alertInternalError)
 		return err
@@ -666,16 +674,9 @@ findCert:
 				}
 			}
 
-			var isGMCert bool
-
-			if x509Cert.PublicKeyAlgorithm == x509.ECDSA {
-				pubKey, ok := x509Cert.PublicKey.(*ecdsa.PublicKey)
-				if ok && pubKey.Curve == sm2.P256Sm2() {
-					isGMCert = true
-				}
-			}
-
-			if !isGMCert {
+			switch {
+			case x509Cert.PublicKeyAlgorithm == x509.SM2:
+			default:
 				continue findCert
 			}
 

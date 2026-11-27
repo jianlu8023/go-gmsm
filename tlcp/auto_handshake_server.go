@@ -1,6 +1,6 @@
 // GMTLS 和 TLS 自动切换
 
-package gmtls
+package tlcp
 
 import (
 	"crypto"
@@ -70,7 +70,7 @@ func (c *Conn) serverHandshakeAutoSwitch() error {
 }
 
 // 处理 GMSSL 客户端 Hello消息
-// Code segment copy from: gmtls/gm_handshake_server_double.go:114
+// Code segment copy from: tlcp/gm_handshake_server_double.go:114
 //
 // c: 连接对象
 // hs: GMSSL服务端握手状态
@@ -224,7 +224,7 @@ func processClientHelloGM(c *Conn, hs *serverHandshakeStateGM) (isResume bool, e
 }
 
 // 运行GMSSL服务端握手流程
-// Code segment copy from: gmtls/gm_handshake_server_double.go:39
+// Code segment copy from: tlcp/gm_handshake_server_double.go:39
 //
 // c: 连接对象
 // hs: GMSSL服务端握手状态
@@ -295,7 +295,7 @@ func runServerHandshakeGM(c *Conn, hs *serverHandshakeStateGM, isResume bool) er
 }
 
 // 处理 TLS 客户端 Hello消息
-// Code segment copy from: gmtls/handshake_server.go:122
+// Code segment copy from: tlcp/handshake_server.go:122
 //
 // c: 连接对象
 // hs: TLS服务端握手状态
@@ -474,7 +474,7 @@ Curves:
 }
 
 // 运行TLS服务端握手流程
-// Code segment copy from: gmtls/handshake_server.go:51
+// Code segment copy from: tlcp/handshake_server.go:51
 //
 // c: 连接对象
 // hs: TLS服务端握手状态

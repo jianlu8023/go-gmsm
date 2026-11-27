@@ -5,7 +5,7 @@
 //go:build single_cert
 // +build single_cert
 
-package gmtls
+package tlcp
 
 import (
 	"crypto"

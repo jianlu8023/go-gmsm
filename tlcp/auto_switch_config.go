@@ -1,4 +1,4 @@
-package gmtls
+package tlcp
 
 // NewBasicAutoSwitchConfig 返回一个实现了GMSSL/TLS自动切换的配置
 //

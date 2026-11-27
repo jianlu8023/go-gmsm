@@ -13,18 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package gmcredentials
+package credentials
 
-import gmtls "github.com/jianlu8023/go-gmsm/gmtls"
+import tlcp "github.com/jianlu8023/go-gmsm/tlcp"
 
 // cloneTLSConfig returns a shallow clone of the exported
 // fields of cfg, ignoring the unexported sync.Once, which
 // contains a mutex and must not be copied.
 //
 // If cfg is nil, a new zero tls.Config is returned.
-func cloneTLSConfig(cfg *gmtls.Config) *gmtls.Config {
+func cloneTLSConfig(cfg *tlcp.Config) *tlcp.Config {
 	if cfg == nil {
-		return &gmtls.Config{}
+		return &tlcp.Config{}
 	}
 
 	return cfg.Clone()

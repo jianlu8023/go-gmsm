@@ -14,7 +14,7 @@ limitations under the License.
 */
 
 // add sm2 support
-package gmtls
+package tlcp
 
 import (
 	"crypto"
