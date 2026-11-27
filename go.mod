@@ -3,6 +3,7 @@ module github.com/jianlu8023/go-gmsm
 go 1.22
 
 require (
+	github.com/emmansun/gmsm v0.29.8
 	// github.com/golang/protobuf v1.4.2
 	// golang.org/x/crypto v0.0.0-20201012173705-84dcc777aaee
 	// golang.org/x/net v0.0.0-20201010224723-4f7140c49acb

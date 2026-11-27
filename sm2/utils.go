@@ -5,23 +5,23 @@ import (
 	"math/big"
 )
 
+// Decompress 由压缩公钥恢复公钥（y = sqrt(x^3 + ax + b) 按首位取符号）。
+// 与归档的 tjfoc 实现等价，曲线运算改为 emmansun 曲线参数（big.Int mod P）。
 func Decompress(a []byte) *PublicKey {
-	var aa, xx, xx3 sm2P256FieldElement
-
-	P256Sm2()
 	x := new(big.Int).SetBytes(a[1:])
-	curve := sm2P256
-	sm2P256FromBig(&xx, x)
-	sm2P256Square(&xx3, &xx)       // x3 = x ^ 2
-	sm2P256Mul(&xx3, &xx3, &xx)    // x3 = x ^ 2 * x
-	sm2P256Mul(&aa, &curve.a, &xx) // a = a * x
-	sm2P256Add(&xx3, &xx3, &aa)
-	sm2P256Add(&xx3, &xx3, &curve.b)
+	params := P256Sm2().Params()
+	// y^2 = x^3 + a*x + b, a = P - 3
+	xx3 := new(big.Int).Mul(x, x)
+	xx3.Mul(xx3, x)
+	ax := new(big.Int).Sub(params.P, three)
+	ax.Mul(ax, x)
+	xx3.Add(xx3, ax)
+	xx3.Add(xx3, params.B)
+	xx3.Mod(xx3, params.P)
 
-	y2 := sm2P256ToBig(&xx3)
-	y := new(big.Int).ModSqrt(y2, sm2P256.P)
+	y := new(big.Int).ModSqrt(xx3, params.P)
 	if getLastBit(y) != uint(a[0]) {
-		y.Sub(sm2P256.P, y)
+		y.Sub(params.P, y)
 	}
 	return &PublicKey{
 		Curve: P256Sm2(),
@@ -57,4 +57,8 @@ func SignDataToSignDigit(sign []byte) (*big.Int, *big.Int, error) {
 		return nil, nil, err
 	}
 	return sm2Sign.R, sm2Sign.S, nil
+}
+
+func getLastBit(a *big.Int) uint {
+	return a.Bit(0)
 }

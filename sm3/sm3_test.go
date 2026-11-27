@@ -1,55 +1,52 @@
-/*
-Copyright Suzhou Tongji Fintech Research Institute 2017 All Rights Reserved.
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-                 http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package sm3
 
 import (
-	"fmt"
-	"io/ioutil"
+	"bytes"
 	"os"
 	"testing"
+
+	tjfocsm3 "github.com/jianlu8023/go-gmsm/tjfoc/gmsm/sm3"
 )
 
-func byteToString(b []byte) string {
-	ret := ""
-	for i := 0; i < len(b); i++ {
-		ret += fmt.Sprintf("%02x", b[i])
-	}
-	fmt.Println("ret = ", ret)
-	return ret
-}
+// TestSm3 复刻原 tjfoc 测试流程（写 ifile 再读取摘要），并断言新实现
+// （emmansun）与原 tjfoc 实现的摘要逐字节一致——等价性证据。
 func TestSm3(t *testing.T) {
 	msg := []byte("test")
-	err := ioutil.WriteFile("ifile", msg, os.FileMode(0644)) // 生成测试文件
+	if err := os.WriteFile("ifile", msg, 0644); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := os.ReadFile("ifile")
 	if err != nil {
 		t.Fatal(err)
 	}
-	msg, err = ioutil.ReadFile("ifile")
-	if err != nil {
-		t.Fatal(err)
-	}
+
 	hw := New()
 	hw.Write(msg)
 	hash := hw.Sum(nil)
-	fmt.Println(hash)
-	fmt.Printf("hash = %d\n", len(hash))
-	fmt.Printf("%s\n", byteToString(hash))
-	hash1 := Sm3Sum(msg)
-	fmt.Println(hash1)
-	fmt.Printf("%s\n", byteToString(hash1))
+	if len(hash) != 32 {
+		t.Fatalf("hash length = %d, want 32", len(hash))
+	}
 
+	sum := Sm3Sum(msg)
+	if !bytes.Equal(hash, sum) {
+		t.Fatalf("New/Sum = %x, Sm3Sum = %x", hash, sum)
+	}
+
+	// 与原实现逐字节比对
+	if old := tjfocsm3.Sm3Sum(msg); !bytes.Equal(sum, old) {
+		t.Fatalf("new Sm3Sum = %x, tjfoc Sm3Sum = %x", sum, old)
+	}
+	oldHw := tjfocsm3.New()
+	oldHw.Write(msg)
+	if oldHash := oldHw.Sum(nil); !bytes.Equal(hash, oldHash) {
+		t.Fatalf("new hash = %x, tjfoc hash = %x", hash, oldHash)
+	}
+
+	// 长消息（跨块）一致性
+	long := bytes.Repeat([]byte("1234567890"), 1234)
+	if old := tjfocsm3.Sm3Sum(long); !bytes.Equal(Sm3Sum(long), old) {
+		t.Fatal("long message digest mismatch with tjfoc")
+	}
 }
 
 func BenchmarkSm3(t *testing.B) {
@@ -57,7 +54,6 @@ func BenchmarkSm3(t *testing.B) {
 	msg := []byte("test")
 	hw := New()
 	for i := 0; i < t.N; i++ {
-
 		hw.Sum(nil)
 		Sm3Sum(msg)
 	}
