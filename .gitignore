@@ -2,3 +2,13 @@
 .idea/
 *.iml
 
+
+### 测试证书 ###
+examples/grpcsvr/certs/
+examples/websvr/certs/
+
+### 测试副产物 ###
+pkcs12/priv.pem
+pkcs12/test.p12
+sm2/TestResult
+sm4/key.pem
