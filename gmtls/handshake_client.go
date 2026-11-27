@@ -630,8 +630,20 @@ func (hs *clientHandshakeState) processServerHello() (bool, error) {
 	}
 
 	if serverHasALPN {
-		c.clientProtocol = hs.serverHello.alpnProtocol
-		c.clientProtocolFallback = false
+		serverProto := hs.serverHello.alpnProtocol
+		for _, proto := range hs.hello.alpnProtocols {
+			if proto == serverProto {
+				c.clientProtocol = serverProto
+				c.clientProtocolFallback = false
+				break
+			}
+		}
+		if c.clientProtocol == "" {
+			// RFC 7301 Section 3.2: the client MUST fail the handshake if
+			// the server selected a protocol it did not advertise.
+			c.sendAlert(alertHandshakeFailure)
+			return false, errors.New("tls: server selected unadvertised ALPN protocol")
+		}
 	}
 	c.scts = hs.serverHello.scts
 

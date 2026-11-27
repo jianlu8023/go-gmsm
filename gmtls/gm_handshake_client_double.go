@@ -35,11 +35,30 @@ func makeClientHelloGM(config *Config) (*clientHelloMsg, error) {
 		return nil, errors.New("tls: either ServerName or InsecureSkipVerify must be specified in the tls.Config")
 	}
 
+	nextProtosLength := 0
+	for _, proto := range config.NextProtos {
+		if l := len(proto); l == 0 || l > 255 {
+			return nil, errors.New("tls: invalid NextProtos value")
+		} else {
+			nextProtosLength += 1 + l
+		}
+	}
+
+	if nextProtosLength > 0xffff {
+		return nil, errors.New("tls: NextProtos values too large")
+	}
+
 	hello := &clientHelloMsg{
 		vers:               config.GMSupport.GetVersion(),
 		compressionMethods: []uint8{compressionNone},
 		random:             make([]byte, 32),
-		serverName:         hostnameInSNI(config.ServerName),
+		// gmhttp2 vendor patch: the upstream makeClientHelloGM omitted the
+		// SNI / NPN / ALPN fields, so GMSSL client hellos never carried an
+		// ALPN extension. Mirror the standard handshake_client.go
+		// makeClientHello so ALPN ("h2") and SNI are negotiated natively.
+		serverName:    hostnameInSNI(config.ServerName),
+		nextProtoNeg:  len(config.NextProtos) > 0,
+		alpnProtocols: config.NextProtos,
 	}
 	possibleCipherSuites := getCipherSuites(config)
 	hello.cipherSuites = make([]uint16, 0, len(possibleCipherSuites))
@@ -468,8 +487,20 @@ func (hs *clientHandshakeStateGM) processServerHello() (bool, error) {
 	}
 
 	if serverHasALPN {
-		c.clientProtocol = hs.serverHello.alpnProtocol
-		c.clientProtocolFallback = false
+		serverProto := hs.serverHello.alpnProtocol
+		for _, proto := range hs.hello.alpnProtocols {
+			if proto == serverProto {
+				c.clientProtocol = serverProto
+				c.clientProtocolFallback = false
+				break
+			}
+		}
+		if c.clientProtocol == "" {
+			// RFC 7301 Section 3.2: the client MUST fail the handshake if
+			// the server selected a protocol it did not advertise.
+			c.sendAlert(alertHandshakeFailure)
+			return false, errors.New("tls: server selected unadvertised ALPN protocol")
+		}
 	}
 	c.scts = hs.serverHello.scts
 

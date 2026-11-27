@@ -135,10 +135,19 @@ func processClientHelloGM(c *Conn, hs *serverHandshakeStateGM) (isResume bool, e
 		c.serverName = hs.clientHello.serverName
 	}
 
-	if len(hs.clientHello.alpnProtocols) > 0 {
+	// RFC 7301 Section 3.2: negotiation only applies when the server has
+	// configured at least one protocol; otherwise it answers with no ALPN
+	// extension and the handshake continues.
+	if len(hs.clientHello.alpnProtocols) > 0 && len(c.config.NextProtos) > 0 {
 		if selectedProto, fallback := mutualProtocol(hs.clientHello.alpnProtocols, c.config.NextProtos); !fallback {
 			hs.hello.alpnProtocol = selectedProto
 			c.clientProtocol = selectedProto
+		} else {
+			// RFC 7301 Section 3.2: the server MUST fail the handshake
+			// when there is no common protocol. The fallback value from
+			// mutualProtocol is never sent to the client.
+			c.sendAlert(alertNoApplicationProtocol)
+			return false, errors.New("tls: client and server do not share a protocol")
 		}
 	} else {
 		// Although sending an empty NPN extension is reasonable, Firefox has
@@ -370,10 +379,19 @@ Curves:
 		c.serverName = hs.clientHello.serverName
 	}
 
-	if len(hs.clientHello.alpnProtocols) > 0 {
+	// RFC 7301 Section 3.2: negotiation only applies when the server has
+	// configured at least one protocol; otherwise it answers with no ALPN
+	// extension and the handshake continues.
+	if len(hs.clientHello.alpnProtocols) > 0 && len(c.config.NextProtos) > 0 {
 		if selectedProto, fallback := mutualProtocol(hs.clientHello.alpnProtocols, c.config.NextProtos); !fallback {
 			hs.hello.alpnProtocol = selectedProto
 			c.clientProtocol = selectedProto
+		} else {
+			// RFC 7301 Section 3.2: the server MUST fail the handshake
+			// when there is no common protocol. The fallback value from
+			// mutualProtocol is never sent to the client.
+			c.sendAlert(alertNoApplicationProtocol)
+			return false, errors.New("tls: client and server do not share a protocol")
 		}
 	} else {
 		// Although sending an empty NPN extension is reasonable, Firefox has
